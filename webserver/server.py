@@ -19,6 +19,8 @@ import os
 from sqlalchemy import *
 from sqlalchemy.pool import NullPool
 from flask import Flask, request, render_template, g, redirect, Response
+from flask import Flask, flash, redirect, render_template, request, session, abort
+
 
 tmpl_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'templates')
 app = Flask(__name__, template_folder=tmpl_dir)
@@ -36,8 +38,8 @@ app = Flask(__name__, template_folder=tmpl_dir)
 # For your convenience, we already set it to the class database
 
 # Use the DB credentials you received by e-mail
-DB_USER = "YOUR_DB_USERNAME_HERE"
-DB_PASSWORD = "YOUR_DB_PASSWORD_HERE"
+DB_USER = "cx2225"
+DB_PASSWORD = "ak7dcl93"
 
 DB_SERVER = "w4111.cisxo09blonu.us-east-1.rds.amazonaws.com"
 
@@ -101,6 +103,8 @@ def teardown_request(exception):
 # see for routing: http://flask.pocoo.org/docs/0.10/quickstart/#routing
 # see for decorators: http://simeonfranklin.com/blog/2012/jul/1/python-decorators-in-12-steps/
 #
+
+
 @app.route('/')
 def index():
   """
@@ -169,28 +173,224 @@ def index():
 # notice that the functio name is another() rather than index()
 # the functions for each app.route needs to have different names
 #
-@app.route('/another')
-def another():
-  return render_template("anotherfile.html")
 
 
-# Example of adding new data to the database
-@app.route('/add', methods=['POST'])
-def add():
-  name = request.form['name']
-  print name
-  cmd = 'INSERT INTO test(name) VALUES (:name1), (:name2)';
-  g.conn.execute(text(cmd), name1 = name, name2 = name);
-  return redirect('/')
+@app.route('/home')
+def home():
+    if not session.get('logged_in'):
+        return render_template('login.html')
+    else:
+        return "Hello Boss!  <a href='/logout'>Logout</a>"
 
 
-@app.route('/login')
+@app.route('/login', methods = ['GET','POST'])
 def login():
-    abort(401)
-    this_is_never_executed()
+  username = request.form['username']
+  password = request.form['password']
+  temp=[username, password]
+  print(temp)
+  # check if u_id and password are correct
+  cmd = 'select *  from User1 where u_id = (:name1) and u_password = (:name2)' 
+  cursor = g.conn.execute(text(cmd), name1 = username, name2 = password )
+  result = [r for r in cursor]
+  cursor.close()
+
+  # if the u_id exists, but enter a wrong password
+  cmd2 = 'select *  from User1 where u_id = (:name1) and u_password != (:name2)' 
+  cursor_exist = g.conn.execute(text(cmd2), name1 = username, name2 = password)
+
+  result_exist = [r for r in cursor_exist]
+  cursor_exist.close()
+
+  print(result)
+  if  len(result) != 0:
+    return render_template('facility_search.html')
+  elif len(result_exist) != 0:
+    content = 'Wrong password, try again'
+    return render_template('login2.html')
+
+  else :
+    return render_template('signup.html')
+
+  
+  
+
+
+
+@app.route('/signup', methods=['GET', 'POST'])
+def register():
+    username = request.form['username']
+    password = request.form['password']
+    display_name = request.form['name']
+    
+    cmd = 'select u_id from User1 where u_id = (:name1)'
+    r = g.conn.execute(text(cmd), name1 = username)
+    # if username already exists
+    res = [re for re in r]
+    r.close()
+    if(len(res) != 0):
+      return render_template('user_id_error.html')
+       
+    else:
+      cmd = 'insert into User1 (u_name, u_id, u_password) values ( (:name1), (:name2), (:name3) )'
+      cursor = g.conn.execute(text(cmd), name1 = display_name, name2 = username, name3 = password)
+      cursor.close()
+      return render_template('login.html')
+    
+
+
+@app.route('/restaurant/<id>')
+def restaurant(id):
+  #cursor = g.conn.execute('SELECT f_id, f_name, f_zip FROM Facility WHERE f_name = \'CREPE EXPRESS\'')
+  #cursor = g.conn.execute('SELECT f_id, f_name, f_zip FROM Facility WHERE f_name = \'' + id + '\'')
+
+  # basic info
+  cmd_basic = 'SELECT * FROM Facility WHERE f_name = (:name1)'
+  cursor_basic = g.conn.execute(text(cmd_basic), name1 = id)
+  result_ls1 = []
+  for result in cursor_basic:
+    res = [result[0], result[1], result[2], result[3], result[4], result[5]] # reuslt[0] is f_id
+    result_ls1.append(res)
+  cursor_basic.close()
+
+  # violation
+  cmd_violation = 'SELECT V.v_description, V.v_code,  V.v_status FROM Facility F LEFT JOIN Inspect I LEFT JOIN Have1 H LEFT JOIN Violation V on H.v_id = V.v_id on H.serial_number = I.serial_number on F.f_id = I.f_id WHERE f_name = (:name1)'
+  cursor_violation = g.conn.execute(text(cmd_violation), name1 = id)
+
+  result_ls2 = []
+  for result in cursor_violation:
+    res = [result[0], result[1], result[2]]
+    result_ls2.append(res)
+  cursor_violation.close()
+  if len(result_ls2) == 0:
+    result_ls2 = [['None']]
+
+  
+  
+  total_ls = result_ls1 + result_ls2 
+  f_id = total_ls[0][0] # f_id 
+
+  # owner
+  cmd_owner = 'SELECT O.o_id, O.o_name FROM owner O LEFT JOIN facility_own_owner FO on O.o_id = FO.o_id WHERE FO.f_id = (:name1)';
+  cursor_owner = g.conn.execute(text(cmd_owner), name1 = f_id)
+  result_ls3 = []
+  for result in cursor_owner:
+    result_ls3.append(result)
+  cursor_owner.close()
+  
+  # service
+  cmd_service = 'select distinct S.s_description FROM service S left join provide_service PS on S.s_id = PS.s_id where PS.f_id = (:name1)'
+  cursor_service = g.conn.execute(text(cmd_service), name1 = f_id)
+  result_ls4 = []
+  for result in cursor_service:
+    result_ls4.append(result)
+  cursor_service.close()
+  if len(result_ls4) == 0:
+    result_ls4 = [['None']]
+
+  # comment
+  cmd_comment = 'Select U.u_name, C.time, C.content FROM Comment C INNER JOIN User1 U on C.u_id = U.u_id WHERE C.f_id = (:name1)'
+  cursor_comment = g.conn.execute(text(cmd_comment), name1 = f_id)
+  result_ls5 = []
+  for result in cursor_comment:
+    res = [result[0], result[1], result[2]]
+    result_ls5.append(res)
+  cursor_comment.close()
+  if len(result_ls5) == 0:
+    result_ls5 = [['None']]
+  
+  # employee
+  cmd_employee = 'select Employee_Do.e_id from facility inner join Inspect on facility.f_id = Inspect.f_id inner join Inspection ON Inspect.serial_number = Inspection.serial_number inner join Employee_Do ON Inspection.serial_number = Employee_Do.serial_number where facility.f_id = (:name1)'
+  cursor_employee = g.conn.execute(text(cmd_employee), name1 = f_id)
+  result_ls7 = []
+  for result in cursor_employee:
+    result_ls7.append(result)
+  cursor_employee.close()
+  if len(result_ls7) == 0:
+    result_ls7 = [['None']]
+
+  # Inspection
+  cmd_inspection = 'select Inspection.ins_date, Inspection.ins_score,Inspection.ins_grade from facility inner join Inspect on facility.f_id = Inspect.f_id inner join Inspection ON Inspect.serial_number = Inspection.serial_number where facility.f_id = (:name1)'
+  cursor_inspection = g.conn.execute(text(cmd_inspection), name1 = f_id)
+  result_ls8 = []
+  for result in cursor_inspection:
+    res = [result[0], result[1], result[2]]
+    result_ls8.append(res)
+  cursor_inspection.close()
+  if len(result_ls8) == 0:
+    result_ls8 = [['None']]
+
+  total_ls = result_ls1 + result_ls3 + result_ls4 + [result_ls2] + [result_ls5] + result_ls7 + result_ls8
+  context = dict(data = total_ls)
+  print context
+  return render_template("restaurant.html", **context)
+
+# search results
+@app.route('/search', methods=['POST'])
+def search():
+  name = request.form['name']
+  name = name.upper()
+  pattern = '%'
+  name_like = ''.join([pattern, name, pattern])
+
+  cmd = 'Select f_name, f_zip from Facility WHERE f_name LIKE (:name1)';
+  cursor = g.conn.execute(text(cmd), name1 = name_like)
+  names = []
+  #result_ls = []
+  for result in cursor:
+    #res = [result[0], result[1]]
+    #result_ls.append(res)
+    names.append(result['f_name'])  # can also be accessed using result[0]
+  cursor.close()
+
+  context = dict(data = names)
+  # print data
+  return render_template("facility_search.html", **context)
+
+
+@app.route('/sub/<fid>', methods=['GET', 'POST'])
+def submit(fid):
+  comment = request.form['comment']
+  time = request.form['time']
+  u_id = request.form['u_id']
+  cmd = 'select u_id from Comment where u_id =  (:name1)'
+  cursor = g.conn.execute(text(cmd) , name1 = u_id)
+
+  result1 = [r for r in cursor]
+  cursor.close()
+
+  if len(result1) != 0:
+    # insert into TABLE Comment
+    cmd_comment = 'insert into Comment (time, content, u_id, f_id) values((:name1), (:name2), (:name3), (:name4))'
+    cursor_comment = g.conn.execute(text(cmd_comment),  name1 = time, name2 = comment, name3 = u_id, name4 = fid)
+
+    # insert into TABLE Comment_On
+    #cmd_comment_on = 'insert into Comment_On (time, u_id, f_id) values((:name1), (:name2), (:name3))'
+    #cursor_comment_on = g.conn.execute(text(cmd_comment_on) , name1 = time, name2 = u_id, name3 = fid)
+
+    cursor_comment.close()
+    #cursor_comment_on.close()
+    
+    return redirect('/fsearch')
+  else :
+    return render_template('fail_comment.html') 
+ 
+
+
+
+@app.route('/signup_page')
+def signup():
+  return render_template('signup.html')
+
+
+@app.route('/fsearch')
+def another():
+  return render_template("facility_search.html")
+
 
 
 if __name__ == "__main__":
+  app.secret_key = os.urandom(12)
   import click
 
   @click.command()
